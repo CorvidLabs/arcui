@@ -589,8 +589,10 @@ async function runMethod(method, button, card) {
         const group = sim.simulateResponse.txnGroups[0];
         const logs = group?.txnResults?.[0]?.txnResult?.logs ?? [];
         const decoded = decodeAbiReturn(logs, method.returns?.type ?? "void");
-        if (group?.failureMessage) {
-            showResult(card, false, group.failureMessage);
+        const fail = group?.failureMessage ?? "";
+        const feeOnly = /overspend|fees is less than|min fee/i.test(fail);
+        if (fail && !feeOnly) {
+            showResult(card, false, fail);
         } else {
             showResult(card, true, decoded ? `returned ${decoded}` : "succeeded (no return)");
         }

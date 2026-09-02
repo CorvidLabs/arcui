@@ -12,11 +12,13 @@ GitHub Pages (after the workflow has run once):
 
 **https://corvidlabs.github.io/arcui/**
 
-Private repo Pages stays behind GitHub auth. Enable it once:
+Private repo Pages stays behind GitHub auth. The workflow is already in `.github/workflows/pages.yml`. It cannot turn Pages on by itself — a CorvidLabs owner has to do that once:
 
-1. Settings → Pages
-2. Source: **GitHub Actions**
-3. Push to `main` (or run **Deploy GitHub Pages** from the Actions tab)
+1. Open **Settings → Pages**
+2. Build and deployment → Source: **GitHub Actions**
+3. Re-run **Deploy GitHub Pages** from the Actions tab
+
+Until that click, the site is the static files in `docs/`. Anything that can serve that folder is the same page.
 
 The page talks to [AlgoNode](https://algonode.io) algod from the browser. No indexer. No backend.
 
