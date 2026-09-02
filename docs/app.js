@@ -1,3 +1,7 @@
+if (typeof globalThis !== "undefined" && globalThis.global === undefined) {
+    globalThis.global = globalThis;
+}
+
 const NETWORKS = {
     testnet: {
         label: "TestNet",
@@ -19,9 +23,6 @@ const ARCRON = {
     skipAhead: 1,
     catchUp: 0,
 };
-
-const ALGOSDK_URL = "https://esm.sh/algosdk@3.7.0";
-const PERA_URL = "https://esm.sh/@perawallet/connect@1.4.2?bundle";
 
 const BOX_MBR_FIXED = 2500 + 400 * 139;
 const MIN_UPKEEP_FEE = 4000;
@@ -63,9 +64,7 @@ const state = {
     draft: null,
     scheduleFor: null,
     sdk: null,
-    pera: null,
     account: null,
-    walletBusy: false,
     calling: null,
     filter: "",
     activePreset: "",
@@ -255,7 +254,7 @@ async function algodGet(path) {
 
 async function getSdk() {
     if (state.sdk) return state.sdk;
-    state.sdk = await import(ALGOSDK_URL);
+    state.sdk = await import("algosdk");
     return state.sdk;
 }
 
@@ -394,27 +393,125 @@ function decodeAbiReturn(logs, type) {
     return `0x${bytesToHex(payload)}`;
 }
 
-function peraSigner(sender) {
-    return async (txnGroup, indexesToSign) => {
-        if (!state.pera) throw new Error("Wallet is not connected");
-        const grouped = txnGroup.map((txn, i) => ({
-            txn,
-            signers: indexesToSign.includes(i) ? [sender] : [],
-        }));
-        return state.pera.signTransaction([grouped], sender);
+const FALLBACK_WALLETS = [
+    { id: "pera", name: "Pera", icon: null, connected: false, active: false, addresses: [] },
+    { id: "defly", name: "Defly", icon: null, connected: false, active: false, addresses: [] },
+    { id: "lute", name: "Lute", icon: null, connected: false, active: false, addresses: [] },
+    { id: "exodus", name: "Exodus", icon: null, connected: false, active: false, addresses: [] },
+    { id: "kibisis", name: "Kibisis", icon: null, connected: false, active: false, addresses: [] },
+];
+
+let walletManager = null;
+let walletLoad = null;
+let connectingId = null;
+let walletsOpen = false;
+
+function managerNetworks() {
+    return {
+        testnet: {
+            algod: { token: "", baseServer: NETWORKS.testnet.algod, port: 443 },
+            genesisId: "testnet-v1.0",
+            isTestnet: true,
+        },
+        mainnet: {
+            algod: { token: "", baseServer: NETWORKS.mainnet.algod, port: 443 },
+            genesisId: "mainnet-v1.0",
+        },
     };
 }
 
-async function loadPera(network) {
-    if (state.pera) return state.pera;
-    const mod = await import(PERA_URL);
-    const PeraWalletConnect = mod.PeraWalletConnect ?? mod.default?.PeraWalletConnect ?? mod.default;
-    if (typeof PeraWalletConnect !== "function") throw new Error("Pera Wallet Connect did not load");
-    state.pera = new PeraWalletConnect({
-        chainId: network === "mainnet" ? 416001 : 416002,
-        shouldShowSignTxnToast: true,
-    });
-    return state.pera;
+function isDismissal(cause) {
+    const message = (cause instanceof Error ? cause.message : String(cause)).toLowerCase();
+    return (
+        message.includes("closed") ||
+        message.includes("cancel") ||
+        message.includes("rejected") ||
+        message.includes("declined")
+    );
+}
+
+function snapshotWallets(m) {
+    return m.wallets.map((wallet) => ({
+        id: String(wallet.id),
+        name: wallet.metadata?.name ?? String(wallet.id),
+        icon: wallet.metadata?.icon ?? null,
+        connected: wallet.isConnected,
+        active: wallet.isActive,
+        addresses: (wallet.accounts ?? []).map((account) => account.address),
+    }));
+}
+
+function currentWallets() {
+    return walletManager ? snapshotWallets(walletManager) : FALLBACK_WALLETS;
+}
+
+async function loadWalletManager() {
+    if (walletManager) return walletManager;
+    if (walletLoad) return walletLoad;
+    walletLoad = (async () => {
+        const [core, peraMod, deflyMod, luteMod, exodusMod, kibisisMod] = await Promise.all([
+            import("@txnlab/use-wallet"),
+            import("@txnlab/use-wallet-pera"),
+            import("@txnlab/use-wallet-defly"),
+            import("@txnlab/use-wallet-lute"),
+            import("@txnlab/use-wallet-exodus"),
+            import("@txnlab/use-wallet-kibisis"),
+        ]);
+        walletManager = new core.WalletManager({
+            wallets: [peraMod.pera(), deflyMod.defly(), luteMod.lute(), exodusMod.exodus(), kibisisMod.kibisis()],
+            networks: managerNetworks(),
+            defaultNetwork: state.network,
+            options: { persistNetwork: false },
+        });
+        walletManager.subscribe(() => {
+            state.account = walletManager.activeAddress ?? null;
+            renderWallet();
+        });
+        return walletManager;
+    })();
+    try {
+        return await walletLoad;
+    } catch (err) {
+        walletLoad = null;
+        throw err;
+    }
+}
+
+async function connectWalletId(walletId) {
+    const m = await loadWalletManager();
+    if (m.activeNetwork !== state.network) await m.setActiveNetwork(state.network);
+    const wallet = m.wallets.find((candidate) => String(candidate.id) === walletId);
+    if (!wallet) throw new Error(`Unknown wallet: ${walletId}`);
+    for (const other of m.wallets) {
+        if (other.isConnected && other.id !== wallet.id) await other.disconnect();
+    }
+    if (wallet.isConnected) wallet.setActive();
+    else await wallet.connect();
+    const address = m.activeAddress;
+    if (!address) throw new Error("Wallet returned no account");
+    return address;
+}
+
+async function disconnectWallet() {
+    if (!walletManager) return;
+    try {
+        await walletManager.disconnect();
+    } catch {
+        /* already gone */
+    }
+}
+
+function setActiveWalletAccount(address) {
+    walletManager?.activeWallet?.setActiveAccount(address);
+}
+
+function walletSigner() {
+    if (!walletManager?.activeAddress) throw new Error("Wallet is not connected");
+    return walletManager.transactionSigner;
+}
+
+function shortAddr(address) {
+    return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
 async function registerUpkeep(keeperAppId, params, nextId) {
@@ -423,7 +520,7 @@ async function registerUpkeep(keeperAppId, params, nextId) {
     const suggestedParams = await client.getTransactionParams().do();
     const appAddress = algosdk.getApplicationAddress(keeperAppId);
     const composer = new algosdk.AtomicTransactionComposer();
-    const signer = peraSigner(state.account);
+    const signer = walletSigner();
 
     const payment = (amount, leg) => ({
         txn: algosdk.makePaymentTxnWithSuggestedParamsFromObject({
@@ -495,7 +592,7 @@ async function submitNoOpCall(appId, appArgs) {
         appArgs,
         suggestedParams,
     });
-    composer.addTransaction({ txn, signer: peraSigner(state.account) });
+    composer.addTransaction({ txn, signer: walletSigner() });
     const result = await composer.execute(client, 8);
     return { txId: result.txIDs.at(-1) ?? "" };
 }
@@ -536,16 +633,72 @@ function placeholderFor(type, struct) {
 }
 
 function renderWallet() {
-    const btn = $("pera-btn");
-    if (!btn) return;
+    const btn = $("wallet-btn");
+    const pop = $("wallet-pop");
+    if (!btn || !pop) return;
+    const wallets = currentWallets();
+    const active = wallets.find((wallet) => wallet.active) ?? wallets.find((wallet) => wallet.connected);
+    btn.replaceChildren();
+    if (active?.icon) {
+        const img = document.createElement("img");
+        img.src = active.icon;
+        img.alt = "";
+        img.width = 18;
+        img.height = 18;
+        btn.append(img);
+    }
+    btn.append(el("span", "", connectingId ? "…" : state.account ? shortAddr(state.account) : "Connect"));
+    btn.title = state.account ?? "Connect a wallet";
+    btn.classList.toggle("connected", Boolean(state.account));
+    btn.setAttribute("aria-expanded", walletsOpen ? "true" : "false");
+    pop.hidden = !walletsOpen;
+    if (!walletsOpen) {
+        pop.replaceChildren();
+        return;
+    }
+    pop.replaceChildren();
+    if (state.account && active && active.addresses.length > 1) {
+        for (const address of active.addresses) {
+            const row = el(
+                "button",
+                "wallet-account" + (address === state.account ? " active" : ""),
+                shortAddr(address),
+            );
+            row.type = "button";
+            row.setAttribute("role", "option");
+            row.setAttribute("aria-selected", address === state.account ? "true" : "false");
+            row.addEventListener("click", () => {
+                setActiveWalletAccount(address);
+                state.account = address;
+                renderWallet();
+                renderMethods();
+            });
+            pop.append(row);
+        }
+    }
+    for (const wallet of wallets) {
+        const row = el("button", "wallet-choice" + (wallet.active ? " active" : ""));
+        row.type = "button";
+        row.setAttribute("role", "option");
+        row.setAttribute("aria-selected", wallet.active ? "true" : "false");
+        row.disabled = connectingId !== null;
+        if (wallet.icon) {
+            const img = document.createElement("img");
+            img.src = wallet.icon;
+            img.alt = "";
+            img.width = 18;
+            img.height = 18;
+            row.append(img);
+        }
+        row.append(el("span", "", connectingId === wallet.id ? "Waiting…" : wallet.name));
+        row.addEventListener("click", () => void onConnectWallet(wallet.id));
+        pop.append(row);
+    }
     if (state.account) {
-        btn.textContent = `${state.account.slice(0, 6)}…${state.account.slice(-4)}`;
-        btn.title = state.account;
-        btn.classList.add("connected");
-    } else {
-        btn.textContent = state.walletBusy ? "…" : "Pera";
-        btn.removeAttribute("title");
-        btn.classList.remove("connected");
+        const disc = el("button", "wallet-disconnect", "Disconnect");
+        disc.type = "button";
+        disc.addEventListener("click", () => void onDisconnect());
+        pop.append(disc);
     }
 }
 
@@ -647,7 +800,7 @@ function renderMethods() {
         ul.style.color = "var(--text-faint)";
         ul.append(el("li", "", "ARC-4 ABI · ARC-32 / ARC-56 application spec"));
         ul.append(el("li", "", "Algod via AlgoNode · no indexer required"));
-        ul.append(el("li", "", "Pera Wallet signs register on a real origin"));
+        ul.append(el("li", "", "Pera, Defly, Lute, Exodus, or Kibisis signs on a real origin"));
         card.append(ul);
         host.append(card);
         return;
@@ -848,7 +1001,7 @@ function renderSchedule() {
     const sign = el(
         "button",
         "btn btn-ink",
-        state.registerBusy ? "Signing…" : state.account ? "Sign & register" : "Connect Pera to register",
+        state.registerBusy ? "Signing…" : state.account ? "Sign & register" : "Connect a wallet to register",
     );
     sign.type = "button";
     sign.disabled = state.registerBusy || !state.account;
@@ -981,7 +1134,7 @@ async function runMethod(method, signed) {
     renderMethods();
     try {
         if (signed) {
-            if (!state.account) throw new Error("Connect Pera first");
+            if (!state.account) throw new Error("Connect a wallet first");
             const built = await buildMethodCall(state.spec, method, valuesFor(method));
             const result = await submitNoOpCall(state.app.id, built.encoded);
             state.results[method.name] = { ok: true, message: `submitted ${result.txId}` };
@@ -1064,7 +1217,7 @@ async function makeDraft(method) {
 async function signRegister() {
     if (!state.draft || !state.app) return;
     if (!state.account) {
-        setWalletError("Connect Pera to sign register");
+        setWalletError("Connect a wallet to sign register");
         return;
     }
     if (state.network !== "testnet") {
@@ -1107,22 +1260,20 @@ async function signRegister() {
     }
 }
 
-async function onConnect() {
-    state.walletBusy = true;
+async function onConnectWallet(walletId) {
+    connectingId = walletId;
     setWalletError("");
     renderWallet();
     try {
-        const wallet = await loadPera(state.network);
-        const accounts = await wallet.connect();
-        const address = accounts[0];
-        if (!address) throw new Error("Pera returned no account");
+        const address = await connectWalletId(walletId);
         state.account = address;
+        walletsOpen = false;
     } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (/closed|cancel|reject|declin/i.test(message)) setWalletError("Connect cancelled");
-        else setWalletError(message);
+        if (!isDismissal(err)) {
+            setWalletError(err instanceof Error ? err.message : "Could not connect");
+        }
     } finally {
-        state.walletBusy = false;
+        if (connectingId === walletId) connectingId = null;
         renderWallet();
         renderMethods();
     }
@@ -1130,26 +1281,26 @@ async function onConnect() {
 
 async function onDisconnect() {
     try {
-        await state.pera?.disconnect();
+        await disconnectWallet();
     } catch {
         /* already gone */
     }
     state.account = null;
+    walletsOpen = false;
     renderWallet();
     renderMethods();
 }
 
 async function bootWallet() {
     try {
-        const wallet = await loadPera(state.network);
-        const accounts = await wallet.reconnectSession();
-        if (accounts?.[0]) {
-            state.account = accounts[0];
-            renderWallet();
-            renderMethods();
-        }
+        const m = await loadWalletManager();
+        await m.resumeSessions();
+        if (m.activeNetwork !== state.network) await m.setActiveNetwork(state.network);
+        state.account = m.activeAddress ?? null;
+        renderWallet();
+        renderMethods();
     } catch {
-        /* no session, or Pera unavailable — page stays usable */
+        /* no session, or wallets unavailable — page stays usable */
     }
 }
 
@@ -1199,9 +1350,23 @@ function wire() {
     document.querySelectorAll("[data-preset]").forEach((btn) => {
         btn.addEventListener("click", () => loadPreset(btn.dataset.preset));
     });
-    $("pera-btn").addEventListener("click", () => {
-        if (state.account) void onDisconnect();
-        else void onConnect();
+    $("wallet-btn").addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        walletsOpen = !walletsOpen;
+        renderWallet();
+        if (walletsOpen && !walletManager) {
+            void loadWalletManager()
+                .then(() => renderWallet())
+                .catch((err) => {
+                    setWalletError(err instanceof Error ? err.message : "Wallets failed to load");
+                });
+        }
+    });
+    document.addEventListener("mousedown", (ev) => {
+        const menu = $("wallet-menu");
+        if (!walletsOpen || !menu || menu.contains(ev.target)) return;
+        walletsOpen = false;
+        renderWallet();
     });
     $("copy-link").addEventListener("click", async () => {
         try {

@@ -15,15 +15,15 @@ The page talks to [AlgoNode](https://algonode.io) algod from the browser. No ind
 - Load any app id on TestNet or MainNet and decode global state against the spec
 - Generate a form per ABI method
 - Simulate calls that do not need a group payment (empty-signature simulate, unnamed resources allowed)
-- Connect Pera and sign `register` on the live TestNet Keeper
+- Connect Pera, Defly, Lute, Exodus, or Kibisis and sign `register` on the live TestNet Keeper
 - Pack a **Schedule on Arcron** payload for hooks with no group transactions and at most two ABI args. Admin methods (`update` / `freeze` / `UpdateApplication`) are not schedulable; the schedule control is hidden for them
-- Dogfood [spec-sync](https://github.com/CorvidLabs/spec-sync) `v6.0.0-rc.12` against `src/lib` (`specs/arc56`, `schedule`, `register`, `abi`). CI runs `specsync check --strict`
+- Dogfood [spec-sync](https://github.com/CorvidLabs/spec-sync) `v6.0.0-rc.12` against `src/lib` (`specs/arc56`, `schedule`, `register`, `abi`, `wallets`). CI runs `specsync check --strict`. [Trust](https://github.com/CorvidLabs/trust) latest is `v1.2.0-rc.4`; this repository does not adopt it.
 
 ## What it does not do
 
 - Indexer queries or local state. Boxes list and open (max 64 names) but are not decoded as ABI structs
 - Simulate methods that need a `pay` / `axfer` in the group without a wallet (refused, not faked)
-- Sign from an embedded preview iframe — Pera needs a top-level origin (the live GitHub page)
+- Sign from an embedded preview iframe — wallets need a top-level origin (the live GitHub page)
 
 `call_args` is frozen at register. A keeper decides when the hook runs, never what it says. Policy `1` (`SKIP_AHEAD`) is the default you should mean.
 

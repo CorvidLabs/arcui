@@ -40,7 +40,10 @@
                     <option value="testnet">TestNet</option>
                     <option value="mainnet">MainNet</option>
                 </select>
-                <button type="button" class="btn" id="pera-btn">Pera</button>
+                <div class="wallet-menu" id="wallet-menu">
+                    <button type="button" class="btn" id="wallet-btn" aria-haspopup="listbox" aria-expanded="false">Connect</button>
+                    <div class="wallet-pop" id="wallet-pop" hidden></div>
+                </div>
                 <button type="button" class="corvid-theme-toggle" data-corvid-theme-toggle
                         aria-pressed="false" aria-label="Switch to dark theme" title="Switch theme">
                     <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -61,7 +64,7 @@
         <section class="stack" id="left">
             <div class="card">
                 <p class="lede">Generated frontend for any Algorand contract. Paste an app id, drop an ARC-56 spec, or open a live TestNet preset.</p>
-                <p class="msg muted" id="embed-note" hidden>Signing needs a top-level origin. Open this GitHub page in its own tab to connect Pera.</p>
+                <p class="msg muted" id="embed-note" hidden>Signing needs a top-level origin. Open this GitHub page in its own tab to connect a wallet.</p>
                 <div class="chips" id="presets">
                     <button type="button" class="chip active" data-preset="keeper">Arcron Keeper</button>
                     <button type="button" class="chip" data-preset="pulse">Pulse</button>
@@ -96,13 +99,27 @@
     </main>
 
     <footer class="site-footer">
-        <p>v1 · ARC-56 workbench · Pera signs register</p>
+        <p>v1 · ARC-56 workbench · any Algorand wallet signs register</p>
         <nav>
             <a href="https://github.com/CorvidLabs/arcui">GitHub</a>
             <a href="https://corvidlabs.xyz/arcron/console/">Arcron console</a>
         </nav>
     </footer>
 
+    <script type="importmap">
+    {
+        "imports": {
+            "algosdk": "https://esm.sh/algosdk@3.7.0",
+            "@txnlab/use-wallet": "https://esm.sh/@txnlab/use-wallet@5.0.0?external=algosdk",
+            "@txnlab/use-wallet/adapter": "https://esm.sh/@txnlab/use-wallet@5.0.0/adapter?external=algosdk",
+            "@txnlab/use-wallet-pera": "https://esm.sh/@txnlab/use-wallet-pera@5.0.0?external=algosdk,@txnlab/use-wallet",
+            "@txnlab/use-wallet-defly": "https://esm.sh/@txnlab/use-wallet-defly@5.0.0?external=algosdk,@txnlab/use-wallet",
+            "@txnlab/use-wallet-lute": "https://esm.sh/@txnlab/use-wallet-lute@5.0.0?external=algosdk,@txnlab/use-wallet",
+            "@txnlab/use-wallet-exodus": "https://esm.sh/@txnlab/use-wallet-exodus@5.0.0?external=algosdk,@txnlab/use-wallet",
+            "@txnlab/use-wallet-kibisis": "https://esm.sh/@txnlab/use-wallet-kibisis@5.0.0?external=algosdk,@txnlab/use-wallet"
+        }
+    }
+    </script>
     <script defer src="./theme.js"></script>
     <script type="module" src="./app.js"></script>
 </body>

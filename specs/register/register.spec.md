@@ -13,7 +13,7 @@ depends_on:
 
 ## Purpose
 
-Same math as `@corvidlabs/arcron` `js/src/upkeep.ts`. Encode `call_args`, price the box, and submit the three-txn `register` group (MBR pay + funding pay + app call) signed by Pera.
+Same math as `@corvidlabs/arcron` `js/src/upkeep.ts`. Encode `call_args`, price the box, and submit the three-txn `register` group (MBR pay + funding pay + app call) signed by the connected wallet.
 
 ## Public API
 
@@ -99,3 +99,4 @@ Same math as `@corvidlabs/arcron` `js/src/upkeep.ts`. Encode `call_args`, price 
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-09-02 | CorvidLabs | Initial spec-sync dogfood for `src/lib/register.ts`. |
+| 2026-09-02 | CorvidLabs | Signer is any connected TxnLab wallet, not Pera-only. |

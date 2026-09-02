@@ -131,21 +131,84 @@ h1 {
     padding: 0 10px;
 }
 
-#pera-btn {
+.wallet-menu {
+    position: relative;
+    flex: none;
+}
+
+#wallet-btn {
     width: auto;
-    max-width: 140px;
+    max-width: 160px;
     padding: 0 12px;
     flex: none;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
 }
 
-#pera-btn.connected {
+#wallet-btn.connected {
     border-color: var(--sheen);
     color: var(--sheen);
     font-family: var(--font-mono);
     font-size: 12px;
+}
+
+#wallet-btn img,
+.wallet-choice img {
+    width: 18px;
+    height: 18px;
+    border-radius: 3px;
+}
+
+.wallet-pop {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 30;
+    min-width: 208px;
+    padding: 4px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+}
+
+.wallet-choice,
+.wallet-account,
+.wallet-disconnect {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    height: 44px;
+    padding: 0 12px;
+    border: 0;
+    background: transparent;
+    color: var(--ink);
+    font: inherit;
+    font-size: 14px;
+    text-align: left;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+}
+
+.wallet-choice.active,
+.wallet-account.active {
+    color: var(--sheen);
+}
+
+.wallet-choice:hover:not(:disabled),
+.wallet-account:hover,
+.wallet-disconnect:hover {
+    background: color-mix(in oklab, var(--sheen) 8%, transparent);
+}
+
+.wallet-disconnect {
+    border-top: 1px solid var(--hairline);
+    color: var(--text-muted);
+    margin-top: 4px;
 }
 
 .page {
@@ -668,8 +731,8 @@ input {
     .header-actions {
         gap: 6px;
     }
-    #pera-btn {
-        max-width: 120px;
+    #wallet-btn {
+        max-width: 132px;
     }
 }
 
