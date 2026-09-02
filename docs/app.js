@@ -20,7 +20,6 @@ const ARCRON = {
     catchUp: 0,
 };
 
-const ZERO_ADDR = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ";
 const ALGOSDK_URL = "https://esm.sh/algosdk@3.7.0";
 
 const PRESETS = {
@@ -571,8 +570,9 @@ async function runMethod(method, button, card) {
         const algosdk = await getSdk();
         const client = new algosdk.Algodv2("", NETWORKS[state.network].algod, "");
         const sp = await client.getTransactionParams().do();
+        const dummy = algosdk.generateAccount();
         const txn = algosdk.makeApplicationNoOpTxnFromObject({
-            sender: ZERO_ADDR,
+            sender: dummy.addr,
             appIndex: state.app.id,
             appArgs: built.encoded,
             suggestedParams: { ...sp, flatFee: true, fee: sp.minFee ?? 1000n },
