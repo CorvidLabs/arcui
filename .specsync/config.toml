@@ -1,0 +1,6 @@
+specs_dir = "specs"
+source_dirs = ["src"]
+exclude_dirs = ["node_modules", "dist", "docs", "migrations", "public", "scripts", "server"]
+exclude_patterns = ["**/node_modules/**", "**/*.test.ts", "**/docs/**"]
+required_sections = ["Purpose", "Public API", "Invariants", "Behavioral Examples", "Error Cases", "Dependencies", "Change Log"]
+enforcement = "strict"

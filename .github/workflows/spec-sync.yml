@@ -1,0 +1,15 @@
+name: SpecSync
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  specsync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: CorvidLabs/spec-sync@v6.0.0-rc.12
+        with:
+          version: "6.0.0-rc.12"
+          strict: "true"

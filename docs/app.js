@@ -21,6 +21,14 @@ const ARCRON = {
 };
 
 const ALGOSDK_URL = "https://esm.sh/algosdk@3.7.0";
+const PERA_URL = "https://esm.sh/@perawallet/connect@1.4.2?bundle";
+
+const BOX_MBR_FIXED = 2500 + 400 * 139;
+const MIN_UPKEEP_FEE = 4000;
+const REGISTER_GROUP_SIZE = 3;
+const EXECUTIONS = 10;
+const BOX_NAME_PREFIX = "u";
+const ADMIN_METHODS = new Set(["update", "freeze"]);
 
 const PRESETS = {
     keeper: { label: "Arcron Keeper", network: "testnet", appId: ARCRON.testnetAppId, specUrl: "./Keeper.arc56.json" },
@@ -45,14 +53,25 @@ const state = {
     app: null,
     global: [],
     boxes: [],
+    openBox: null,
     round: null,
     values: {},
+    results: {},
     interval: INTERVALS[2].rounds,
     feeAlgo: "0.01",
     policy: ARCRON.skipAhead,
     draft: null,
     scheduleFor: null,
     sdk: null,
+    pera: null,
+    account: null,
+    walletBusy: false,
+    calling: null,
+    filter: "",
+    activePreset: "",
+    registerBusy: false,
+    registerResult: null,
+    copiedSelector: null,
 };
 
 function isTxnType(type) {
@@ -60,23 +79,74 @@ function isTxnType(type) {
 }
 
 function abiArgs(method) {
-    return method.args.filter((a) => !isTxnType(a.type));
+    return (method.args ?? []).filter((a) => !isTxnType(a.type));
 }
 
 function txnArgs(method) {
-    return method.args.filter((a) => isTxnType(a.type));
+    return (method.args ?? []).filter((a) => isTxnType(a.type));
+}
+
+function isAdminMethod(method) {
+    if (ADMIN_METHODS.has(method.name)) return true;
+    const calls = method.actions?.call ?? [];
+    return calls.some((action) => action === "UpdateApplication" || action === "DeleteApplication");
 }
 
 function isSchedulable(method) {
     if (method.readonly) return false;
+    if (isAdminMethod(method)) return false;
     if (txnArgs(method).length > 0) return false;
     return abiArgs(method).length <= 2;
+}
+
+function methodKind(method) {
+    if (method.readonly) return "readonly";
+    if (isSchedulable(method)) return "schedule";
+    return "write";
 }
 
 function methodSignature(method) {
     const args = (method.args ?? []).map((a) => a.type).join(",");
     const ret = method.returns?.type ?? "void";
     return `${method.name}(${args})${ret}`;
+}
+
+function defaultArgValue(arg) {
+    if (arg.defaultValue?.source === "literal" && typeof arg.defaultValue.data === "string") {
+        return arg.defaultValue.data;
+    }
+    if (typeof arg.type === "string" && (arg.type.startsWith("uint") || arg.type === "asset" || arg.type === "application")) {
+        return "0";
+    }
+    if (arg.type === "bool") return "false";
+    return "";
+}
+
+function seedValues(spec) {
+    const seeded = {};
+    for (const method of spec.methods ?? []) {
+        const row = {};
+        for (const arg of method.args ?? []) {
+            const name = arg.name ?? arg.type;
+            const def = defaultArgValue(arg);
+            if (def) row[name] = def;
+        }
+        if (Object.keys(row).length) seeded[method.name] = row;
+    }
+    state.values = seeded;
+}
+
+function valuesFor(method) {
+    const stored = state.values[method.name] ?? {};
+    const out = { ...stored };
+    for (const arg of method.args ?? []) {
+        const name = arg.name ?? arg.type;
+        if (out[name] == null || out[name] === "") {
+            const def = defaultArgValue(arg);
+            if (def) out[name] = def;
+        }
+    }
+    return out;
 }
 
 function parseSpec(raw) {
@@ -107,6 +177,10 @@ function bytesToHex(bytes) {
         .join("");
 }
 
+function hexOf(bytes) {
+    return `0x${bytesToHex(bytes)}`;
+}
+
 function decodeGlobalState(entries, spec) {
     const labels = spec?.state?.keys?.global ?? {};
     const byKey = new Map();
@@ -121,14 +195,54 @@ function decodeGlobalState(entries, spec) {
         const keyName = printable ? asText : `0x${bytesToHex(keyBytes)}`;
         const label = byKey.get(asText) ?? byKey.get(keyName) ?? keyName;
         if (entry.value.type === 2) {
-            return { key: keyName, label, display: String(entry.value.uint ?? 0) };
+            return {
+                key: keyName,
+                label,
+                kind: "uint",
+                display: String(entry.value.uint ?? 0),
+                raw: String(entry.value.uint ?? 0),
+            };
         }
         const raw = entry.value.bytes ?? "";
         const valBytes = raw ? b64ToBytes(raw) : new Uint8Array();
         const text = bytesToUtf8(valBytes);
         const display = /^[\x20-\x7e]*$/.test(text) && text.length > 0 ? text : `0x${bytesToHex(valBytes)}`;
-        return { key: keyName, label, display };
+        return { key: keyName, label, kind: "bytes", display, raw };
     });
+}
+
+function frozenFromState(entries) {
+    const row = entries.find((entry) => entry.label === "frozen" || entry.key === "frozen");
+    if (!row) return null;
+    return row.display === "1" || row.raw === "1";
+}
+
+function parseShareQuery(search) {
+    const q = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+    const net = q.get("net");
+    return {
+        preset: q.get("preset"),
+        app: q.get("app"),
+        net: net === "mainnet" || net === "testnet" ? net : null,
+    };
+}
+
+function buildShareSearch(opts) {
+    const q = new URLSearchParams();
+    if (opts.preset) q.set("preset", opts.preset);
+    if (opts.app) q.set("app", String(opts.app));
+    if (opts.net) q.set("net", opts.net);
+    const s = q.toString();
+    return s ? `?${s}` : "";
+}
+
+function syncShare(next) {
+    try {
+        const search = buildShareSearch(next);
+        window.history.replaceState(null, "", `${window.location.pathname}${search}`);
+    } catch {
+        /* ignore */
+    }
 }
 
 async function algodGet(path) {
@@ -143,6 +257,57 @@ async function getSdk() {
     if (state.sdk) return state.sdk;
     state.sdk = await import(ALGOSDK_URL);
     return state.sdk;
+}
+
+function encodeCallArgs(callArgs) {
+    const count = callArgs.length;
+    const headerBytes = 2 + 2 * count;
+    const bodies = callArgs.map((arg) => {
+        const body = new Uint8Array(2 + arg.length);
+        new DataView(body.buffer).setUint16(0, arg.length);
+        body.set(arg, 2);
+        return body;
+    });
+    const out = new Uint8Array(headerBytes + bodies.reduce((sum, body) => sum + body.length, 0));
+    const view = new DataView(out.buffer);
+    view.setUint16(0, count);
+    let position = headerBytes;
+    bodies.forEach((body, index) => {
+        view.setUint16(2 + 2 * index, position - 2);
+        out.set(body, position);
+        position += body.length;
+    });
+    return out;
+}
+
+function boxMbr(callArgs) {
+    return BOX_MBR_FIXED + 400 * encodeCallArgs(callArgs).length;
+}
+
+function upkeepBoxName(id) {
+    const name = new Uint8Array(9);
+    name[0] = BOX_NAME_PREFIX.charCodeAt(0);
+    new DataView(name.buffer).setBigUint64(1, BigInt(id));
+    return name;
+}
+
+function nextUpkeepIdFromApp(app) {
+    for (const entry of app.params["global-state"] ?? []) {
+        const name = bytesToUtf8(b64ToBytes(entry.key));
+        if (name === "next_upkeep_id") return BigInt(entry.value.uint ?? 0);
+    }
+    return 0n;
+}
+
+function registrationCost(opts) {
+    const boxDeposit = boxMbr(opts.callArgs);
+    const networkFees = opts.minFee * REGISTER_GROUP_SIZE;
+    return {
+        boxDeposit,
+        escrow: opts.funding,
+        networkFees,
+        total: boxDeposit + opts.funding + networkFees,
+    };
 }
 
 function parseAbiValue(algosdk, type, raw, structName, spec) {
@@ -204,7 +369,7 @@ async function buildMethodCall(spec, method, values) {
     const encoded = [selector];
     for (const arg of method.args ?? []) {
         if (isTxnType(arg.type)) continue;
-        const raw = values[arg.name ?? ""] ?? "";
+        const raw = values[arg.name ?? arg.type] ?? values[arg.name ?? ""] ?? "";
         const parsed = parseAbiValue(algosdk, arg.type, raw, arg.struct, spec);
         const type = algosdk.ABIType.from(arg.struct ? structTuple(spec, arg.struct) : arg.type);
         encoded.push(type.encode(parsed));
@@ -229,19 +394,126 @@ function decodeAbiReturn(logs, type) {
     return `0x${bytesToHex(payload)}`;
 }
 
+function peraSigner(sender) {
+    return async (txnGroup, indexesToSign) => {
+        if (!state.pera) throw new Error("Wallet is not connected");
+        const grouped = txnGroup.map((txn, i) => ({
+            txn,
+            signers: indexesToSign.includes(i) ? [sender] : [],
+        }));
+        return state.pera.signTransaction([grouped], sender);
+    };
+}
+
+async function loadPera(network) {
+    if (state.pera) return state.pera;
+    const mod = await import(PERA_URL);
+    const PeraWalletConnect = mod.PeraWalletConnect ?? mod.default?.PeraWalletConnect ?? mod.default;
+    if (typeof PeraWalletConnect !== "function") throw new Error("Pera Wallet Connect did not load");
+    state.pera = new PeraWalletConnect({
+        chainId: network === "mainnet" ? 416001 : 416002,
+        shouldShowSignTxnToast: true,
+    });
+    return state.pera;
+}
+
+async function registerUpkeep(keeperAppId, params, nextId) {
+    const algosdk = await getSdk();
+    const client = new algosdk.Algodv2("", NETWORKS[state.network].algod, "");
+    const suggestedParams = await client.getTransactionParams().do();
+    const appAddress = algosdk.getApplicationAddress(keeperAppId);
+    const composer = new algosdk.AtomicTransactionComposer();
+    const signer = peraSigner(state.account);
+
+    const payment = (amount, leg) => ({
+        txn: algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+            sender: state.account,
+            receiver: appAddress,
+            amount,
+            suggestedParams,
+            note: new TextEncoder().encode(`arcron:${leg}`),
+        }),
+        signer,
+    });
+
+    const method = new algosdk.ABIMethod({
+        name: "register",
+        args: [
+            { name: "mbr_payment", type: "pay" },
+            { name: "funding_payment", type: "pay" },
+            { name: "target_app", type: "uint64" },
+            { name: "call_args", type: "byte[][]" },
+            { name: "interval_rounds", type: "uint64" },
+            { name: "fee_per_execution", type: "uint64" },
+            { name: "policy", type: "uint64" },
+            { name: "fee_cap", type: "uint64" },
+            { name: "fee_asset", type: "uint64" },
+            { name: "asset_fee", type: "uint64" },
+        ],
+        returns: { type: "uint64" },
+    });
+
+    composer.addMethodCall({
+        appID: keeperAppId,
+        method,
+        sender: state.account,
+        signer,
+        suggestedParams,
+        methodArgs: [
+            payment(boxMbr(params.callArgs), "mbr"),
+            payment(params.funding, "funding"),
+            params.targetApp,
+            params.callArgs.map((arg) => Array.from(arg)),
+            params.intervalRounds,
+            params.feePerExecution,
+            params.policy,
+            params.feeCap,
+            params.feeAsset,
+            params.assetFee,
+        ],
+        boxes: [{ appIndex: 0, name: upkeepBoxName(nextId) }],
+        appForeignApps: [params.targetApp],
+    });
+
+    const result = await composer.execute(client, 8);
+    const returned = result.methodResults.at(-1);
+    if (returned?.decodeError) throw returned.decodeError;
+    return {
+        txId: result.txIDs.at(-1) ?? "",
+        returnValue: returned?.returnValue != null ? String(returned.returnValue) : undefined,
+    };
+}
+
+async function submitNoOpCall(appId, appArgs) {
+    const algosdk = await getSdk();
+    const client = new algosdk.Algodv2("", NETWORKS[state.network].algod, "");
+    const suggestedParams = await client.getTransactionParams().do();
+    const composer = new algosdk.AtomicTransactionComposer();
+    const txn = algosdk.makeApplicationNoOpTxnFromObject({
+        sender: state.account,
+        appIndex: appId,
+        appArgs,
+        suggestedParams,
+    });
+    composer.addTransaction({ txn, signer: peraSigner(state.account) });
+    const result = await composer.execute(client, 8);
+    return { txId: result.txIDs.at(-1) ?? "" };
+}
+
 function setError(msg) {
     const el = $("error");
     el.hidden = !msg;
     el.textContent = msg ?? "";
 }
 
-function setBusy(on) {
-    $("busy").hidden = !on;
+function setWalletError(msg) {
+    const el = $("wallet-error");
+    el.hidden = !msg;
+    el.textContent = msg ?? "";
 }
 
-function text(el, value) {
-    el.textContent = value ?? "";
-    return el;
+function setBusy(on) {
+    $("busy").hidden = !on;
 }
 
 function el(tag, className, children) {
@@ -263,6 +535,20 @@ function placeholderFor(type, struct) {
     return type;
 }
 
+function renderWallet() {
+    const btn = $("pera-btn");
+    if (!btn) return;
+    if (state.account) {
+        btn.textContent = `${state.account.slice(0, 6)}…${state.account.slice(-4)}`;
+        btn.title = state.account;
+        btn.classList.add("connected");
+    } else {
+        btn.textContent = state.walletBusy ? "…" : "Pera";
+        btn.removeAttribute("title");
+        btn.classList.remove("connected");
+    }
+}
+
 function renderAppPanel() {
     const host = $("app-panel");
     host.replaceChildren();
@@ -277,11 +563,17 @@ function renderAppPanel() {
     const titles = el("div");
     titles.append(el("p", "eyebrow", NETWORKS[state.network].label));
     titles.append(el("h2", "", state.spec?.name ?? `App ${state.app.id}`));
+    const end = el("div", "app-head-end");
+    const frozen = frozenFromState(state.global);
+    if (frozen !== null) {
+        end.append(el("span", "badge", frozen ? "frozen" : "unfrozen"));
+    }
     const link = el("a", "", String(state.app.id));
     link.href = NETWORKS[state.network].explorerApp(state.app.id);
     link.target = "_blank";
     link.rel = "noreferrer";
-    head.append(titles, link);
+    end.append(link);
+    head.append(titles, end);
     card.append(head);
     if (state.spec?.desc) {
         card.append(el("p", "desc", String(state.spec.desc).split("\n")[0]));
@@ -311,6 +603,28 @@ function renderAppPanel() {
         }
         card.append(list);
     }
+    if (state.boxes.length) {
+        card.append(el("h3", "", "Boxes"));
+        const list = el("ul", "state-list");
+        for (const box of state.boxes) {
+            const li = el("li");
+            li.style.display = "block";
+            li.style.padding = "0";
+            li.style.border = "none";
+            const btn = el("button", "box-btn");
+            btn.type = "button";
+            const name = box.name ?? "";
+            const shown = name.length > 18 ? `${name.slice(0, 18)}…` : name;
+            btn.append(el("span", "name", shown), el("span", "open", "open"));
+            btn.addEventListener("click", () => inspectBox(name));
+            li.append(btn);
+            list.append(li);
+        }
+        card.append(list);
+        if (state.openBox) {
+            card.append(el("pre", "box-value", state.openBox.value));
+        }
+    }
     host.append(card);
 }
 
@@ -324,7 +638,7 @@ function renderMethods() {
             el(
                 "p",
                 "lede",
-                "Arcui reads an ARC-56 spec and draws the forms. Readonly-shaped calls simulate against the live network. Zero-argument hooks can be packed into an Arcron upkeep without writing a console.",
+                "Arcui reads an ARC-56 spec and draws the forms. Readonly-shaped calls simulate against the live network. Zero-argument hooks pack into an Arcron upkeep you can sign from here.",
             ),
         );
         const ul = el("ul", "lede");
@@ -333,7 +647,7 @@ function renderMethods() {
         ul.style.color = "var(--text-faint)";
         ul.append(el("li", "", "ARC-4 ABI · ARC-32 / ARC-56 application spec"));
         ul.append(el("li", "", "Algod via AlgoNode · no indexer required"));
-        ul.append(el("li", "", "Signing a write still needs a wallet on a real origin"));
+        ul.append(el("li", "", "Pera Wallet signs register on a real origin"));
         card.append(ul);
         host.append(card);
         return;
@@ -347,19 +661,67 @@ function renderMethods() {
         host.append(card);
         return;
     }
-    for (const method of state.spec.methods) {
-        host.append(renderMethod(method));
-    }
+    const methods = state.spec.methods ?? [];
     if (state.draft && state.scheduleFor) host.append(renderSchedule());
+    if (methods.length > 6) {
+        const filter = el("input", "filter-methods");
+        filter.type = "text";
+        filter.placeholder = "Filter methods";
+        filter.value = state.filter;
+        filter.setAttribute("aria-label", "Filter methods");
+        filter.addEventListener("input", () => {
+            state.filter = filter.value;
+            applyMethodFilter(host);
+        });
+        host.append(filter);
+    }
+    const q = state.filter.trim().toLowerCase();
+    for (const method of methods) {
+        const card = renderMethod(method);
+        const hay = `${method.name} ${methodSignature(method)}`.toLowerCase();
+        if (q && !hay.includes(q)) card.hidden = true;
+        host.append(card);
+    }
+}
+
+function applyMethodFilter(host) {
+    const q = state.filter.trim().toLowerCase();
+    host.querySelectorAll("[data-method]").forEach((card) => {
+        const hay = `${card.dataset.method} ${card.dataset.sig}`.toLowerCase();
+        card.hidden = Boolean(q) && !hay.includes(q);
+    });
 }
 
 function renderMethod(method) {
     const card = el("article", "card method");
-    const title = el("h3", "");
-    title.append(method.name);
-    if (method.readonly) title.append(el("span", "badge", "readonly"));
-    card.append(title);
-    card.append(el("p", "sig", methodSignature(method)));
+    card.dataset.method = method.name;
+    card.dataset.sig = methodSignature(method);
+    const head = el("div", "method-head");
+    const titles = el("div", "");
+    const titleRow = el("div", "method-title");
+    titleRow.append(el("h3", "", method.name));
+    titleRow.append(el("span", "badge", methodKind(method)));
+    titles.append(titleRow);
+    titles.append(el("p", "sig", methodSignature(method)));
+    const copySel = el("button", "btn btn-selector", state.copiedSelector === method.name ? "copied" : "selector");
+    copySel.type = "button";
+    copySel.addEventListener("click", async () => {
+        try {
+            await navigator.clipboard.writeText(methodSignature(method));
+            state.copiedSelector = method.name;
+            copySel.textContent = "copied";
+            setTimeout(() => {
+                if (state.copiedSelector === method.name) {
+                    state.copiedSelector = null;
+                    copySel.textContent = "selector";
+                }
+            }, 1200);
+        } catch {
+            setError("Could not copy selector");
+        }
+    });
+    head.append(titles, copySel);
+    card.append(head);
     if (method.desc) {
         card.append(el("p", "desc", String(method.desc).split("\n").slice(0, 4).join("\n")));
     }
@@ -371,16 +733,19 @@ function renderMethod(method) {
             const name = arg.name ?? arg.type;
             const field = el("label", "field");
             const top = el("span", "lbl");
-            top.append(`${name} : ${arg.type}`);
+            const nameSpan = document.createElement("span");
+            nameSpan.textContent = name;
+            const typeSpan = el("span", "type", ` : ${arg.type}`);
+            top.append(nameSpan, typeSpan);
             if (isTxnType(arg.type)) {
-                const w = el("span", "warn", " group txn");
-                top.append(w);
+                top.append(el("span", "warn", " group txn"));
             }
             field.append(top);
             const input = el("input");
             input.type = "text";
             input.placeholder = placeholderFor(arg.type, arg.struct);
-            input.value = state.values[method.name]?.[name] ?? "";
+            const stored = valuesFor(method)[name];
+            input.value = stored ?? "";
             input.addEventListener("input", () => {
                 state.values[method.name] ??= {};
                 state.values[method.name][name] = input.value;
@@ -391,10 +756,19 @@ function renderMethod(method) {
         }
     }
     const actions = el("div", "actions");
+    const busy = state.calling === method.name;
     const sim = el("button", "btn btn-ink", txnArgs(method).length ? "Simulate (limited)" : "Simulate");
     sim.type = "button";
-    sim.addEventListener("click", () => runMethod(method, sim, card));
+    sim.disabled = busy;
+    sim.addEventListener("click", () => runMethod(method, false));
     actions.append(sim);
+    if (state.account && txnArgs(method).length === 0) {
+        const call = el("button", "btn", "Call");
+        call.type = "button";
+        call.disabled = busy;
+        call.addEventListener("click", () => runMethod(method, true));
+        actions.append(call);
+    }
     if (isSchedulable(method)) {
         const sched = el("button", "btn" + (state.scheduleFor === method.name ? " active" : ""), "Schedule on Arcron");
         sched.type = "button";
@@ -402,6 +776,10 @@ function renderMethod(method) {
         actions.append(sched);
     }
     card.append(actions);
+    const result = state.results[method.name];
+    if (result) {
+        card.append(el("pre", `result ${result.ok ? "ok" : "fail"}`, result.message));
+    }
     return card;
 }
 
@@ -423,6 +801,8 @@ function renderSchedule() {
     }
     sel.addEventListener("change", () => {
         state.interval = Number(sel.value);
+        const method = state.spec.methods.find((m) => m.name === state.scheduleFor);
+        if (method) makeDraft(method);
     });
     cadence.append(sel);
     const fee = el("label", "field");
@@ -431,6 +811,10 @@ function renderSchedule() {
     feeIn.value = state.feeAlgo;
     feeIn.addEventListener("input", () => {
         state.feeAlgo = feeIn.value;
+    });
+    feeIn.addEventListener("blur", () => {
+        const method = state.spec.methods.find((m) => m.name === state.scheduleFor);
+        if (method) makeDraft(method);
     });
     fee.append(feeIn);
     const pol = el("label", "field");
@@ -441,18 +825,12 @@ function renderSchedule() {
     polSel.value = String(state.policy);
     polSel.addEventListener("change", () => {
         state.policy = Number(polSel.value);
+        const method = state.spec.methods.find((m) => m.name === state.scheduleFor);
+        if (method) makeDraft(method);
     });
     pol.append(polSel);
     grid.append(cadence, fee, pol);
     card.append(grid);
-    const recalc = el("button", "btn", "Recalculate");
-    recalc.type = "button";
-    recalc.style.marginTop = "12px";
-    recalc.addEventListener("click", () => {
-        const method = state.spec.methods.find((m) => m.name === state.scheduleFor);
-        if (method) makeDraft(method);
-    });
-    card.append(recalc);
     const kv = el("dl", "kv");
     const add = (k, v) => {
         const d = el("div");
@@ -462,42 +840,71 @@ function renderSchedule() {
     add("keeper app", String(draft.keeperAppId));
     add("target", String(draft.targetApp));
     add("fee", `${draft.feeMicro} µALGO`);
+    add("box deposit", `${draft.boxDeposit} µALGO`);
+    add("escrow", `${draft.funding} µALGO · ${draft.executions} runs`);
     add("call_args", draft.callArgsHex.join(" · "));
     card.append(kv);
     const actions = el("div", "actions");
-    const copy = el("button", "btn btn-ink", "Copy register payload");
+    const sign = el(
+        "button",
+        "btn btn-ink",
+        state.registerBusy ? "Signing…" : state.account ? "Sign & register" : "Connect Pera to register",
+    );
+    sign.type = "button";
+    sign.disabled = state.registerBusy || !state.account;
+    sign.addEventListener("click", () => signRegister());
+    const copy = el("button", "btn", "Copy payload");
     copy.type = "button";
     copy.addEventListener("click", async () => {
-        await navigator.clipboard.writeText(JSON.stringify(draft, null, 2));
-        copy.textContent = "Copied";
-        setTimeout(() => {
-            copy.textContent = "Copy register payload";
-        }, 1600);
+        try {
+            await navigator.clipboard.writeText(JSON.stringify(draft, null, 2));
+            copy.textContent = "Copied";
+            setTimeout(() => {
+                copy.textContent = "Copy payload";
+            }, 1600);
+        } catch {
+            setError("Could not copy payload");
+        }
     });
-    const open = el("a", "btn", "Open Arcron console");
+    const open = el("a", "btn", "Open console");
     open.href = draft.consoleUrl;
     open.target = "_blank";
     open.rel = "noreferrer";
-    actions.append(copy, open);
+    actions.append(sign, copy, open);
     card.append(actions);
-    card.append(
-        el(
-            "p",
-            "sig",
-            "Submitting register still needs a wallet. This page packs the call; the console at corvidlabs.xyz is the signing surface until Arcui grows one.",
-        ),
-    );
+    if (state.registerResult) {
+        const ok = /registered|submitted/i.test(state.registerResult);
+        card.append(el("pre", `result ${ok ? "ok" : "fail"}`, state.registerResult));
+    }
     return card;
 }
 
-async function applyLoaded(spec, info, status, boxes) {
+async function inspectBox(nameB64) {
+    if (!state.app) return;
+    try {
+        const box = await algodGet(
+            `/v2/applications/${state.app.id}/box?name=b64:${encodeURIComponent(nameB64)}`,
+        );
+        state.openBox = box;
+        renderAppPanel();
+    } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not read box");
+    }
+}
+
+async function applyLoaded(spec, info, status, boxes, presetId = "", seed = false) {
     state.spec = spec;
     state.app = info;
     state.round = status["last-round"];
     state.boxes = boxes ?? [];
+    state.openBox = null;
     state.global = decodeGlobalState(info.params["global-state"] ?? [], spec);
     state.draft = null;
     state.scheduleFor = null;
+    state.registerResult = null;
+    state.results = {};
+    state.activePreset = presetId;
+    if (spec && seed) seedValues(spec);
     renderAppPanel();
     renderMethods();
 }
@@ -522,7 +929,8 @@ async function loadPreset(id) {
             algodGet("/v2/status"),
             algodGet(`/v2/applications/${preset.appId}/boxes?max=64`).catch(() => ({ boxes: [] })),
         ]);
-        await applyLoaded(spec, info, status, boxList.boxes ?? []);
+        await applyLoaded(spec, info, status, boxList.boxes ?? [], id, true);
+        syncShare({ preset: id, net: preset.network });
     } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load preset");
     } finally {
@@ -537,6 +945,7 @@ async function loadApp() {
         return;
     }
     document.querySelectorAll("[data-preset]").forEach((btn) => btn.classList.remove("active"));
+    state.activePreset = "";
     setBusy(true);
     setError("");
     try {
@@ -548,7 +957,8 @@ async function loadApp() {
             algodGet("/v2/status"),
             algodGet(`/v2/applications/${id}/boxes?max=64`).catch(() => ({ boxes: [] })),
         ]);
-        await applyLoaded(spec, info, status, boxList.boxes ?? []);
+        await applyLoaded(spec, info, status, boxList.boxes ?? [], "");
+        syncShare({ app: id, net: state.network });
     } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load application");
     } finally {
@@ -556,73 +966,81 @@ async function loadApp() {
     }
 }
 
-async function runMethod(method, button, card) {
+async function runMethod(method, signed) {
     if (!state.spec || !state.app) return;
-    if (txnArgs(method).length) {
-        showResult(card, false, "This method needs a payment or asset transfer in the group. Simulate without a wallet is limited to methods that take no transactions.");
+    if (!signed && txnArgs(method).length) {
+        state.results[method.name] = {
+            ok: false,
+            message:
+                "This method needs a payment or asset transfer in the group. Simulate without a wallet is limited to methods that take no transactions.",
+        };
+        renderMethods();
         return;
     }
-    const original = button.textContent;
-    button.disabled = true;
-    button.textContent = "Simulating…";
+    state.calling = method.name;
+    renderMethods();
     try {
-        const built = await buildMethodCall(state.spec, method, state.values[method.name] ?? {});
-        const algosdk = await getSdk();
-        const client = new algosdk.Algodv2("", NETWORKS[state.network].algod, "");
-        const sp = await client.getTransactionParams().do();
-        const dummy = algosdk.generateAccount();
-        const txn = algosdk.makeApplicationNoOpTxnFromObject({
-            sender: dummy.addr,
-            appIndex: state.app.id,
-            appArgs: built.encoded,
-            suggestedParams: { ...sp, flatFee: true, fee: 0n },
-        });
-        const atc = new algosdk.AtomicTransactionComposer();
-        atc.addTransaction({ txn, signer: algosdk.makeEmptyTransactionSigner() });
-        const request = new algosdk.modelsv2.SimulateRequest({
-            txnGroups: [],
-            allowEmptySignatures: true,
-            allowUnnamedResources: true,
-            extraOpcodeBudget: 20_000,
-        });
-        const sim = await atc.simulate(client, request);
-        const group = sim.simulateResponse.txnGroups[0];
-        const logs = group?.txnResults?.[0]?.txnResult?.logs ?? [];
-        const decoded = decodeAbiReturn(logs, method.returns?.type ?? "void");
-        const fail = group?.failureMessage ?? "";
-        const feeOnly = /overspend|fees is less than|min fee/i.test(fail);
-        if (fail && !feeOnly) {
-            showResult(card, false, fail);
+        if (signed) {
+            if (!state.account) throw new Error("Connect Pera first");
+            const built = await buildMethodCall(state.spec, method, valuesFor(method));
+            const result = await submitNoOpCall(state.app.id, built.encoded);
+            state.results[method.name] = { ok: true, message: `submitted ${result.txId}` };
         } else {
-            showResult(card, true, decoded ? `returned ${decoded}` : "succeeded (no return)");
+            const built = await buildMethodCall(state.spec, method, valuesFor(method));
+            const algosdk = await getSdk();
+            const client = new algosdk.Algodv2("", NETWORKS[state.network].algod, "");
+            const sp = await client.getTransactionParams().do();
+            const dummy = algosdk.generateAccount();
+            const from = state.account ?? dummy.addr;
+            const txn = algosdk.makeApplicationNoOpTxnFromObject({
+                sender: from,
+                appIndex: state.app.id,
+                appArgs: built.encoded,
+                suggestedParams: { ...sp, flatFee: true, fee: state.account ? sp.minFee ?? 1000n : 0n },
+            });
+            const atc = new algosdk.AtomicTransactionComposer();
+            atc.addTransaction({ txn, signer: algosdk.makeEmptyTransactionSigner() });
+            const request = new algosdk.modelsv2.SimulateRequest({
+                txnGroups: [],
+                allowEmptySignatures: true,
+                allowUnnamedResources: true,
+                extraOpcodeBudget: 20_000,
+            });
+            const sim = await atc.simulate(client, request);
+            const group = sim.simulateResponse.txnGroups[0];
+            const logs = group?.txnResults?.[0]?.txnResult?.logs ?? [];
+            const decoded = decodeAbiReturn(logs, method.returns?.type ?? "void");
+            const fail = group?.failureMessage ?? "";
+            const feeOnly = /overspend|fees is less than|min fee|fee too (small|low)/i.test(fail);
+            if (fail && !feeOnly) {
+                state.results[method.name] = { ok: false, message: fail };
+            } else {
+                state.results[method.name] = { ok: true, message: decoded ? `returned ${decoded}` : "succeeded (no return)" };
+            }
         }
     } catch (err) {
-        showResult(card, false, err instanceof Error ? err.message : "Call failed");
+        state.results[method.name] = { ok: false, message: err instanceof Error ? err.message : "Call failed" };
     } finally {
-        button.disabled = false;
-        button.textContent = original;
+        state.calling = null;
+        renderMethods();
     }
-}
-
-function showResult(card, ok, message) {
-    card.querySelector(".result")?.remove();
-    const pre = el("pre", `result ${ok ? "ok" : "fail"}`, message);
-    card.append(pre);
 }
 
 async function makeDraft(method) {
     if (!state.spec || !state.app) return;
-    setBusy(true);
     try {
-        const built = await buildMethodCall(state.spec, method, state.values[method.name] ?? {});
+        const built = await buildMethodCall(state.spec, method, valuesFor(method));
         const interval = INTERVALS.find((i) => i.rounds === state.interval);
-        const feeMicro = Math.max(ARCRON.minFeeMicro, Math.round((Number(state.feeAlgo) || 0.01) * 1_000_000));
+        const feeMicro = Math.max(MIN_UPKEEP_FEE, Math.round((Number(state.feeAlgo) || 0.01) * 1_000_000));
+        const funding = feeMicro * EXECUTIONS;
+        const cost = registrationCost({ callArgs: built.encoded, funding, minFee: 1000 });
         state.scheduleFor = method.name;
+        state.registerResult = null;
         state.draft = {
             targetApp: state.app.id,
             method: method.name,
             signature: methodSignature(method),
-            callArgsHex: built.encoded.map((b) => `0x${bytesToHex(b)}`),
+            callArgsHex: built.encoded.map(hexOf),
             intervalRounds: state.interval,
             intervalLabel: interval?.label ?? `${state.interval} rounds`,
             feeMicro,
@@ -632,18 +1050,131 @@ async function makeDraft(method) {
             keeperAppId: ARCRON.testnetAppId,
             consoleUrl: ARCRON.console,
             note: "call_args is frozen at register. A keeper decides when this runs, never what it says. Policy 1 (SKIP_AHEAD) is the default you should mean.",
+            boxDeposit: boxMbr(built.encoded),
+            funding,
+            executions: EXECUTIONS,
+            totalMicro: cost.total,
         };
         renderMethods();
     } catch (err) {
         setError(err instanceof Error ? err.message : "Could not draft the upkeep");
-    } finally {
-        setBusy(false);
     }
+}
+
+async function signRegister() {
+    if (!state.draft || !state.app) return;
+    if (!state.account) {
+        setWalletError("Connect Pera to sign register");
+        return;
+    }
+    if (state.network !== "testnet") {
+        state.registerResult = "Arcron Keeper is TestNet-only for now.";
+        renderMethods();
+        return;
+    }
+    state.registerBusy = true;
+    state.registerResult = null;
+    renderMethods();
+    try {
+        const method = state.spec?.methods.find((m) => m.name === state.draft.method);
+        if (!state.spec || !method) throw new Error("Spec lost the method");
+        const built = await buildMethodCall(state.spec, method, valuesFor(method));
+        const keeper = await algodGet(`/v2/applications/${ARCRON.testnetAppId}`);
+        const nextId = nextUpkeepIdFromApp(keeper);
+        const result = await registerUpkeep(
+            ARCRON.testnetAppId,
+            {
+                targetApp: state.draft.targetApp,
+                callArgs: built.encoded,
+                intervalRounds: state.draft.intervalRounds,
+                feePerExecution: state.draft.feeMicro,
+                funding: state.draft.funding,
+                policy: state.draft.policy,
+                feeCap: 0,
+                feeAsset: 0,
+                assetFee: 0,
+            },
+            nextId,
+        );
+        state.registerResult = result.returnValue
+            ? `Registered upkeep ${result.returnValue} · ${result.txId}`
+            : `Submitted ${result.txId}`;
+    } catch (err) {
+        state.registerResult = err instanceof Error ? err.message : "Register failed";
+    } finally {
+        state.registerBusy = false;
+        renderMethods();
+    }
+}
+
+async function onConnect() {
+    state.walletBusy = true;
+    setWalletError("");
+    renderWallet();
+    try {
+        const wallet = await loadPera(state.network);
+        const accounts = await wallet.connect();
+        const address = accounts[0];
+        if (!address) throw new Error("Pera returned no account");
+        state.account = address;
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (/closed|cancel|reject|declin/i.test(message)) setWalletError("Connect cancelled");
+        else setWalletError(message);
+    } finally {
+        state.walletBusy = false;
+        renderWallet();
+        renderMethods();
+    }
+}
+
+async function onDisconnect() {
+    try {
+        await state.pera?.disconnect();
+    } catch {
+        /* already gone */
+    }
+    state.account = null;
+    renderWallet();
+    renderMethods();
+}
+
+async function bootWallet() {
+    try {
+        const wallet = await loadPera(state.network);
+        const accounts = await wallet.reconnectSession();
+        if (accounts?.[0]) {
+            state.account = accounts[0];
+            renderWallet();
+            renderMethods();
+        }
+    } catch {
+        /* no session, or Pera unavailable — page stays usable */
+    }
+}
+
+function honorShareQuery() {
+    const q = parseShareQuery(window.location.search);
+    if (q.preset && PRESETS[q.preset]) {
+        void loadPreset(q.preset);
+        return;
+    }
+    if (q.app) {
+        $("app-id").value = q.app;
+        if (q.net) {
+            state.network = q.net;
+            $("network").value = q.net;
+        }
+        void loadApp();
+        return;
+    }
+    void loadPreset("keeper");
 }
 
 function wire() {
     $("network").addEventListener("change", (e) => {
         state.network = e.target.value;
+        if (state.account) void onDisconnect();
     });
     $("load-app").addEventListener("click", () => loadApp());
     $("pick-spec").addEventListener("click", () => $("spec-file").click());
@@ -656,6 +1187,7 @@ function wire() {
             $("spec-text").value = text;
             try {
                 state.spec = parseSpec(JSON.parse(text));
+                seedValues(state.spec);
                 setError("");
                 renderMethods();
             } catch (err) {
@@ -667,9 +1199,33 @@ function wire() {
     document.querySelectorAll("[data-preset]").forEach((btn) => {
         btn.addEventListener("click", () => loadPreset(btn.dataset.preset));
     });
+    $("pera-btn").addEventListener("click", () => {
+        if (state.account) void onDisconnect();
+        else void onConnect();
+    });
+    $("copy-link").addEventListener("click", async () => {
+        try {
+            const url = `${window.location.origin}${window.location.pathname}${window.location.search}`;
+            await navigator.clipboard.writeText(url);
+            const note = $("share-copied");
+            note.hidden = false;
+            setTimeout(() => {
+                note.hidden = true;
+            }, 1600);
+        } catch {
+            setError("Could not copy link");
+        }
+    });
+    renderWallet();
     renderAppPanel();
     renderMethods();
-    void loadPreset("keeper");
+    honorShareQuery();
+    void bootWallet();
+    try {
+        if (window.self !== window.top) $("embed-note").hidden = false;
+    } catch {
+        $("embed-note").hidden = false;
+    }
 }
 
 wire();

@@ -31,7 +31,7 @@
                 <path d="M33 21.5 L58.5 29.5 L33 39.5 Z" fill="currentColor" />
                 <circle cx="27.5" cy="26" r="3" fill="var(--paper)" />
             </svg>
-            <div>
+            <div class="brand">
                 <p class="eyebrow">CorvidLabs</p>
                 <h1>Arcui</h1>
             </div>
@@ -40,6 +40,7 @@
                     <option value="testnet">TestNet</option>
                     <option value="mainnet">MainNet</option>
                 </select>
+                <button type="button" class="btn" id="pera-btn">Pera</button>
                 <button type="button" class="corvid-theme-toggle" data-corvid-theme-toggle
                         aria-pressed="false" aria-label="Switch to dark theme" title="Switch theme">
                     <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -60,12 +61,13 @@
         <section class="stack" id="left">
             <div class="card">
                 <p class="lede">Generated frontend for any Algorand contract. Paste an app id, drop an ARC-56 spec, or open a live TestNet preset.</p>
+                <p class="msg muted" id="embed-note" hidden>Signing needs a top-level origin. Open this GitHub page in its own tab to connect Pera.</p>
                 <div class="chips" id="presets">
                     <button type="button" class="chip active" data-preset="keeper">Arcron Keeper</button>
                     <button type="button" class="chip" data-preset="pulse">Pulse</button>
                 </div>
                 <label class="field">
-                    <span class="lbl">App id</span>
+                    <span class="eyebrow-lbl">App id</span>
                     <div class="row">
                         <input id="app-id" inputmode="numeric" value="769891898" placeholder="769891898" />
                         <button type="button" class="btn btn-ink" id="load-app">Load</button>
@@ -73,9 +75,18 @@
                 </label>
                 <div class="row extra">
                     <button type="button" class="btn grow" id="pick-spec">ARC-56 JSON</button>
+                    <button type="button" class="btn btn-icon" id="copy-link" title="Copy share link" aria-label="Copy share link">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M10 13a5 5 0 0 0 7.54.54l1.92-1.92a5 5 0 0 0-7.07-7.07L10.5 6.5" />
+                            <path d="M14 11a5 5 0 0 0-7.54-.54L4.54 12.38a5 5 0 0 0 7.07 7.07L13.5 17.5" />
+                        </svg>
+                    </button>
                     <input id="spec-file" type="file" accept="application/json,.json" hidden />
                 </div>
                 <textarea id="spec-text" placeholder="Or paste the ARC-56 JSON here"></textarea>
+                <p class="msg success" id="share-copied" hidden>Link copied</p>
+                <p class="msg error" id="wallet-error" hidden></p>
                 <p class="msg error" id="error" hidden></p>
                 <p class="msg muted" id="busy" hidden>Reading the chain</p>
             </div>
@@ -85,7 +96,7 @@
     </main>
 
     <footer class="site-footer">
-        <p>v0 · ARC-56 workbench · signing still needs a wallet</p>
+        <p>v1 · ARC-56 workbench · Pera signs register</p>
         <nav>
             <a href="https://github.com/CorvidLabs/arcui">GitHub</a>
             <a href="https://corvidlabs.xyz/arcron/console/">Arcron console</a>

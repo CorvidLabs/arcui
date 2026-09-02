@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "enabled": true,
+  "require_change_for_meaningful_files": false,
+  "meaningful_paths": [
+    "src/",
+    "docs/"
+  ],
+  "ignored_paths": [
+    ".specsync/",
+    "specs/"
+  ],
+  "verification_commands": []
+}
