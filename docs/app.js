@@ -575,7 +575,7 @@ async function runMethod(method, button, card) {
             sender: dummy.addr,
             appIndex: state.app.id,
             appArgs: built.encoded,
-            suggestedParams: { ...sp, flatFee: true, fee: sp.minFee ?? 1000n },
+            suggestedParams: { ...sp, flatFee: true, fee: 0n },
         });
         const atc = new algosdk.AtomicTransactionComposer();
         atc.addTransaction({ txn, signer: algosdk.makeEmptyTransactionSigner() });
