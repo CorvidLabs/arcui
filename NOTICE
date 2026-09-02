@@ -1,0 +1,34 @@
+Arcui: a generated frontend for any Algorand smart contract
+Copyright 2026 CorvidLabs
+
+This product includes software developed by CorvidLabs, licensed under the
+Apache License, Version 2.0 (see LICENSE).
+
+------------------------------------------------------------------------------
+Brand assets are NOT covered by the Apache License
+------------------------------------------------------------------------------
+
+The files in `docs/` that come from the CorvidLabs design system are
+trademarks and brand assets, not licensed code:
+
+  - docs/tokens.css
+  - docs/theme.js
+  - docs/favicon.svg
+  - docs/logo-mark.svg
+
+The Apache License granted for the rest of this repository does **not** grant
+permission to use CorvidLabs' name, logo mark or mascot. Specifically:
+
+  - You may build, run, fork and modify this software with the brand files in
+    place, including for a deployment of your own.
+  - You may not use the CorvidLabs name, logo mark or mascot to identify your
+    own project, product or organisation, or in a way that suggests CorvidLabs
+    endorses it.
+
+If you are forking Arcui to run as your own thing, replace those files with
+ your own tokens and marks. The page reads them through CSS custom properties,
+so nothing in the application code needs to change.
+
+This mirrors the usual practice of licensing the code and reserving the
+trademarks; Apache-2.0 §6 already declines to grant trademark rights, and this
+notice states plainly which files that applies to.
