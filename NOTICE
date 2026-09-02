@@ -26,7 +26,7 @@ permission to use CorvidLabs' name, logo mark or mascot. Specifically:
     endorses it.
 
 If you are forking Arcui to run as your own thing, replace those files with
- your own tokens and marks. The page reads them through CSS custom properties,
+your own tokens and marks. The page reads them through CSS custom properties,
 so nothing in the application code needs to change.
 
 This mirrors the usual practice of licensing the code and reserving the

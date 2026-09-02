@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Arcui · CorvidLabs</title>
+    <meta name="description" content="Generated frontend for any Algorand smart contract. Paste an app id or an ARC-56 spec." />
+    <meta name="theme-color" content="#131619" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./tokens.css" />
+    <link rel="stylesheet" href="./site.css" />
+    <script>
+        (() => {
+            try {
+                const q = new URLSearchParams(location.search).get("theme");
+                const t = q || localStorage.getItem("corvid-theme");
+                if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+            } catch (_) {}
+        })();
+    </script>
+</head>
+<body>
+    <div class="iridescence" aria-hidden="true"></div>
+    <header class="site-header">
+        <div class="header-inner">
+            <svg class="mark" viewBox="0 0 64 64" role="img" aria-label="CorvidLabs">
+                <circle cx="24" cy="32" r="18" fill="currentColor" />
+                <path d="M33 21.5 L58.5 29.5 L33 39.5 Z" fill="currentColor" />
+                <circle cx="27.5" cy="26" r="3" fill="var(--paper)" />
+            </svg>
+            <div>
+                <p class="eyebrow">CorvidLabs</p>
+                <h1>Arcui</h1>
+            </div>
+            <div class="header-actions">
+                <select id="network" aria-label="Network">
+                    <option value="testnet">TestNet</option>
+                    <option value="mainnet">MainNet</option>
+                </select>
+                <button type="button" class="corvid-theme-toggle" data-corvid-theme-toggle
+                        aria-pressed="false" aria-label="Switch to dark theme" title="Switch theme">
+                    <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <circle cx="12" cy="12" r="4.2" />
+                        <path d="M12 2.6v2.4M12 19v2.4M4.2 4.2l1.7 1.7M18.1 18.1l1.7 1.7M2.6 12h2.4M19 12h2.4M4.2 19.8l1.7-1.7M18.1 5.9l1.7-1.7" />
+                    </svg>
+                    <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M21 12.8A8.6 8.6 0 1 1 11.2 3a6.7 6.7 0 0 0 9.8 9.8z" />
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="page">
+        <section class="stack" id="left">
+            <div class="card">
+                <p class="lede">Generated frontend for any Algorand contract. Paste an app id, drop an ARC-56 spec, or open a live TestNet preset.</p>
+                <div class="chips" id="presets">
+                    <button type="button" class="chip active" data-preset="keeper">Arcron Keeper</button>
+                    <button type="button" class="chip" data-preset="pulse">Pulse</button>
+                </div>
+                <label class="field">
+                    <span class="lbl">App id</span>
+                    <div class="row">
+                        <input id="app-id" inputmode="numeric" value="769891898" placeholder="769891898" />
+                        <button type="button" class="btn btn-ink" id="load-app">Load</button>
+                    </div>
+                </label>
+                <div class="row extra">
+                    <button type="button" class="btn grow" id="pick-spec">ARC-56 JSON</button>
+                    <input id="spec-file" type="file" accept="application/json,.json" hidden />
+                </div>
+                <textarea id="spec-text" placeholder="Or paste the ARC-56 JSON here"></textarea>
+                <p class="msg error" id="error" hidden></p>
+                <p class="msg muted" id="busy" hidden>Reading the chain</p>
+            </div>
+            <div id="app-panel"></div>
+        </section>
+        <section class="stack" id="methods"></section>
+    </main>
+
+    <footer class="site-footer">
+        <p>v0 · ARC-56 workbench · signing still needs a wallet</p>
+        <nav>
+            <a href="https://github.com/CorvidLabs/arcui">GitHub</a>
+            <a href="https://corvidlabs.xyz/arcron/console/">Arcron console</a>
+        </nav>
+    </footer>
+
+    <script defer src="./theme.js"></script>
+    <script type="module" src="./app.js"></script>
+</body>
+</html>
