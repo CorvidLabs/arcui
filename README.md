@@ -17,7 +17,7 @@ The page talks to [AlgoNode](https://algonode.io) algod from the browser. No ind
 - Simulate calls that do not need a group payment (empty-signature simulate, unnamed resources allowed)
 - Connect Pera, Defly, Lute, Exodus, or Kibisis and sign `register` on the live TestNet Keeper
 - Pack a **Schedule on Arcron** payload for hooks with no group transactions and at most two ABI args. Admin methods (`update` / `freeze` / `UpdateApplication`) are not schedulable; the schedule control is hidden for them
-- Dogfood [spec-sync](https://github.com/CorvidLabs/spec-sync) `v6.0.0-rc.12` against `src/lib` (`specs/arc56`, `schedule`, `register`, `abi`, `wallets`). CI runs `specsync check --strict`. [Trust](https://github.com/CorvidLabs/trust) latest is `v1.2.0-rc.4`; this repository does not adopt it.
+- Dogfood [spec-sync](https://github.com/CorvidLabs/spec-sync) `v6.0.0` against `src/lib` (`specs/arc56`, `schedule`, `register`, `abi`, `wallets`). CI runs `specsync check --strict`. [Trust](https://github.com/CorvidLabs/trust) `v1.2.0` gates the repository and runs the `verify` lane.
 
 ## What it does not do
 

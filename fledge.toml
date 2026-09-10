@@ -1,0 +1,6 @@
+[tasks]
+specs = "specsync check --strict"
+
+[lanes.verify]
+description = "Strict spec-sync check over src/lib, the only verification this static site stack runs in CI"
+steps = ["specs"]
